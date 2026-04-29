@@ -258,11 +258,6 @@ body {
   display: flex; align-items: center; gap: 8px; padding: 6px 0 0;
   font-size: 12px; color: var(--muted);
 }
-.rest-timer-btn {
-  background: rgba(232,113,90,0.08); border: 1px solid rgba(232,113,90,0.2);
-  color: var(--coral); font-family: 'DM Sans', sans-serif; font-weight: 600;
-  font-size: 12px; padding: 5px 12px; border-radius: 20px; cursor: pointer;
-}
 
 /* ── CARDIO ── */
 .cardio-intro {
@@ -309,38 +304,6 @@ body {
   font-family: 'DM Sans', sans-serif; font-weight: 600; font-size: 15px;
   letter-spacing: 0.06em; padding: 16px; border-radius: var(--radius);
   border: none; cursor: pointer;
-}
-
-/* ── REST TIMER OVERLAY ── */
-.timer-overlay {
-  position: fixed; inset: 0; background: rgba(247,245,242,0.97); z-index: 300;
-  display: none; flex-direction: column; align-items: center;
-  justify-content: center; padding: 40px 20px;
-}
-.timer-overlay.on { display: flex; }
-.timer-lbl {
-  font-size: 11px; font-weight: 600; letter-spacing: 0.14em;
-  color: var(--muted); text-transform: uppercase; margin-bottom: 24px;
-}
-.timer-circle {
-  width: 200px; height: 200px; border-radius: 50%; background: white;
-  border: 1px solid var(--border); display: flex; flex-direction: column;
-  align-items: center; justify-content: center; position: relative; margin-bottom: 28px;
-}
-.timer-svg { position: absolute; inset: -6px; width: calc(100% + 12px); height: calc(100% + 12px); transform: rotate(-90deg); }
-.t-track { fill: none; stroke: var(--border); stroke-width: 3; }
-.t-prog { fill: none; stroke: var(--coral); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
-.timer-count {
-  font-family: 'Playfair Display', serif; font-weight: 900; font-size: 68px;
-  color: var(--charcoal); line-height: 1;
-}
-.timer-sec { font-size: 12px; font-weight: 600; letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; }
-.timer-next { font-size: 14px; font-weight: 500; color: var(--mid); margin-bottom: 32px; text-align: center; }
-.timer-skip {
-  background: white; border: 1px solid var(--border); color: var(--charcoal);
-  font-family: 'DM Sans', sans-serif; font-weight: 600; font-size: 14px;
-  letter-spacing: 0.04em; padding: 14px 48px; border-radius: var(--radius);
-  cursor: pointer;
 }
 
 /* ── PROGRESS SCREEN ── */
@@ -467,21 +430,6 @@ input[type=number] { -moz-appearance: textfield; }
 <!-- FINISH BAR -->
 <div class="finish-bar" id="finishBar">
   <button class="finish-btn" onclick="finishWorkout()">Complete Workout</button>
-</div>
-
-<!-- REST TIMER -->
-<div class="timer-overlay" id="timerOverlay">
-  <div class="timer-lbl">Rest Period</div>
-  <div class="timer-circle">
-    <svg class="timer-svg" viewBox="0 0 216 216">
-      <circle class="t-track" cx="108" cy="108" r="100"/>
-      <circle class="t-prog" id="tProg" cx="108" cy="108" r="100" stroke-dasharray="628.3" stroke-dashoffset="0"/>
-    </svg>
-    <div class="timer-count" id="tCount">90</div>
-    <div class="timer-sec">sec</div>
-  </div>
-  <div class="timer-next" id="tNext">Rest</div>
-  <button class="timer-skip" onclick="stopTimer()">Skip Rest</button>
 </div>
 
 <!-- NAV BAR -->
@@ -654,12 +602,17 @@ function loadProgrammes() {
 }
 function saveProgrammes() { try { localStorage.setItem('scree_ss_progs', JSON.stringify(PROGRAMMES)); } catch {} }
 
+// One-shot reset for v4 unit change (kg → lbs)
+if (!localStorage.getItem('scree_v4_reset')) {
+  localStorage.removeItem('scree_ss');
+  localStorage.setItem('scree_v4_reset', '1');
+}
+
 let STATE = loadState();
 let PROGRAMMES = loadProgrammes();
 let activeMonthId = STATE._activeMonth || 'm1';
 let activeWeek = STATE._activeWeek || 1;
 let currentDetailDay = null;
-let timerInterval = null, timerTotal = 90, timerRemaining = 90;
 
 function getActiveProg() { return PROGRAMMES.find(p => p.id === activeMonthId) || PROGRAMMES[0]; }
 
@@ -784,7 +737,6 @@ function openDetail(dayIdx) {
 function closeDetail() {
   document.getElementById('detailOverlay').classList.remove('active');
   document.getElementById('finishBar').classList.remove('show');
-  stopTimer();
   currentDetailDay = null;
   renderSchedule();
 }
@@ -845,11 +797,11 @@ function getLastRef(prog, dayKey, exId, currentWeek) {
 function renderExCard(prog, dayKey, ex, reps, week, paired) {
   const uid = `${prog.id}_${dayKey}_${ex.id}`;
   const lastRef = getLastRef(prog, dayKey, ex.id, week);
-  const lastHtml = lastRef ? `<div class="last-ref">↑ Best: ${lastRef.max}kg (Wk ${lastRef.week})</div>` : '';
+  const lastHtml = lastRef ? `<div class="last-ref">↑ Best: ${lastRef.max} lbs (Wk ${lastRef.week})</div>` : '';
 
   let setsHtml = `<div class="sets-wrap">
     ${lastHtml}
-    <div class="sets-cols"><div>Set</div><div>kg</div><div>Reps</div><div>✓</div></div>`;
+    <div class="sets-cols"><div>Set</div><div>lbs</div><div>Reps</div><div>✓</div></div>`;
 
   for (let i = 0; i < ex.sets; i++) {
     const k = setKey(prog.id, week, dayKey, ex.id, i);
@@ -875,9 +827,7 @@ function renderExCard(prog, dayKey, ex, reps, week, paired) {
   }
 
   if (ex.rest && ex.rest !== 'none') {
-    setsHtml += `<div class="rest-row">⏱ Rest: <strong style="color:var(--charcoal);margin:0 4px">${ex.rest}s</strong>
-      <button class="rest-timer-btn" onclick="startTimer(${parseInt(ex.rest)}, '${ex.name}')">Start Timer</button>
-    </div>`;
+    setsHtml += `<div class="rest-row">⏱ Rest <strong style="color:var(--charcoal);margin:0 4px">${ex.rest}s</strong> between sets</div>`;
   }
   setsHtml += '</div>';
 
@@ -911,7 +861,6 @@ function tickSet(progId, week, dayKey, exId, setIdx, rest, uid) {
   const btn = document.getElementById(`t_${uid}_${setIdx}`);
   btn.classList.toggle('done', STATE[k].done);
   btn.textContent = STATE[k].done ? '✓' : '';
-  if (STATE[k].done && rest && rest !== 'none') startTimer(parseInt(rest), 'Next set');
 }
 
 // ── CARDIO ──
@@ -1015,7 +964,7 @@ function renderProgress() {
         ${points.map(pt => {
           const h = Math.max(6, Math.round((pt.max / maxVal) * 46));
           return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px">
-            <div style="font-size:9px;color:var(--coral);font-weight:600">${pt.max}kg</div>
+            <div style="font-size:9px;color:var(--coral);font-weight:600">${pt.max} lbs</div>
             <div style="width:100%;height:${h}px;background:var(--coral);border-radius:3px 3px 0 0;opacity:0.7"></div>
             <div style="font-size:8px;color:var(--muted);font-weight:500">${pt.label}</div>
           </div>`;
@@ -1101,35 +1050,6 @@ function importProgramme() {
     errEl.textContent = '⚠ ' + e.message;
     errEl.style.display = 'block';
   }
-}
-
-// ══════════════════════════════════════════════════
-// REST TIMER
-// ══════════════════════════════════════════════════
-function startTimer(seconds, label) {
-  stopTimer();
-  timerTotal = seconds; timerRemaining = seconds;
-  document.getElementById('tNext').textContent = label || 'Rest';
-  document.getElementById('timerOverlay').classList.add('on');
-  updateTimer();
-  timerInterval = setInterval(() => {
-    timerRemaining--;
-    updateTimer();
-    if (timerRemaining <= 0) {
-      stopTimer();
-      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-      showToast('Rest done — go! 💪');
-    }
-  }, 1000);
-}
-function updateTimer() {
-  document.getElementById('tCount').textContent = timerRemaining;
-  const offset = 628.3 * (1 - timerRemaining / timerTotal);
-  document.getElementById('tProg').style.strokeDashoffset = offset;
-}
-function stopTimer() {
-  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-  document.getElementById('timerOverlay').classList.remove('on');
 }
 
 // ══════════════════════════════════════════════════
