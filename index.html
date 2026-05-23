@@ -770,15 +770,28 @@ function renderWeightsDetail(prog, day, week) {
   document.getElementById('detailBody').innerHTML = html;
 }
 
+function calcE1RM(weight, reps) {
+  if (!weight || !reps || reps < 1) return null;
+  return Math.round(weight * reps * 0.0333 + weight);
+}
+
 function getLastRef(prog, dayKey, exId, currentWeek) {
+  // Search backwards through current programme weeks
   for (let w = currentWeek - 1; w >= 1; w--) {
     const sets = [];
     for (let s = 0; s < 5; s++) {
       const k = setKey(prog.id, w, dayKey, exId, s);
-      if (STATE[k] && STATE[k].weight) sets.push(parseFloat(STATE[k].weight));
+      if (STATE[k] && STATE[k].weight) {
+        sets.push({ weight: parseFloat(STATE[k].weight), reps: parseFloat(STATE[k].reps) || null });
+      }
     }
-    if (sets.length) return { week: w, max: Math.max(...sets) };
+    if (sets.length) {
+      const maxWeightSet = sets.reduce((best, s) => s.weight > best.weight ? s : best, sets[0]);
+      const e1rm = calcE1RM(maxWeightSet.weight, maxWeightSet.reps);
+      return { week: w, weight: maxWeightSet.weight, reps: maxWeightSet.reps, e1rm };
+    }
   }
+  // Fall back to previous programmes
   for (const p of PROGRAMMES) {
     if (p.id === prog.id) continue;
     if (!p.workouts[dayKey]) continue;
@@ -786,18 +799,50 @@ function getLastRef(prog, dayKey, exId, currentWeek) {
       const sets = [];
       for (let s = 0; s < 5; s++) {
         const k = setKey(p.id, w, dayKey, exId, s);
-        if (STATE[k] && STATE[k].weight) sets.push(parseFloat(STATE[k].weight));
+        if (STATE[k] && STATE[k].weight) {
+          sets.push({ weight: parseFloat(STATE[k].weight), reps: parseFloat(STATE[k].reps) || null });
+        }
       }
-      if (sets.length) return { week: `${p.name} W${w}`, max: Math.max(...sets) };
+      if (sets.length) {
+        const maxWeightSet = sets.reduce((best, s) => s.weight > best.weight ? s : best, sets[0]);
+        const e1rm = calcE1RM(maxWeightSet.weight, maxWeightSet.reps);
+        return { week: `${p.name} W${w}`, weight: maxWeightSet.weight, reps: maxWeightSet.reps, e1rm };
+      }
     }
   }
   return null;
 }
 
+function getBestE1RM(prog, dayKey, exId) {
+  let best = null;
+  PROGRAMMES.forEach(p => {
+    if (!p.workouts[dayKey]) return;
+    for (let w = 1; w <= (p.weeks || 4); w++) {
+      for (let s = 0; s < 5; s++) {
+        const k = setKey(p.id, w, dayKey, exId, s);
+        if (STATE[k] && STATE[k].weight) {
+          const e = calcE1RM(parseFloat(STATE[k].weight), parseFloat(STATE[k].reps));
+          if (e && (!best || e > best)) best = e;
+        }
+      }
+    }
+  });
+  return best;
+}
+
 function renderExCard(prog, dayKey, ex, reps, week, paired) {
   const uid = `${prog.id}_${dayKey}_${ex.id}`;
   const lastRef = getLastRef(prog, dayKey, ex.id, week);
-  const lastHtml = lastRef ? `<div class="last-ref">↑ Best: ${lastRef.max} lbs (Wk ${lastRef.week})</div>` : '';
+
+  let lastHtml = '';
+  if (lastRef) {
+    const weekLabel = typeof lastRef.week === 'number' ? `Wk ${lastRef.week}` : lastRef.week;
+    const repsStr = lastRef.reps ? ` × ${lastRef.reps}` : '';
+    const e1rmStr = lastRef.e1rm ? `<span style="color:var(--slate);margin-left:10px">e1RM ${lastRef.e1rm} lbs</span>` : '';
+    lastHtml = `<div class="last-ref">
+      <span>↖ Last: ${lastRef.weight} lbs${repsStr} <span style="color:var(--muted);font-weight:400">(${weekLabel})</span>${e1rmStr}</span>
+    </div>`;
+  }
 
   let setsHtml = `<div class="sets-wrap">
     ${lastHtml}
@@ -810,7 +855,7 @@ function renderExCard(prog, dayKey, ex, reps, week, paired) {
     setsHtml += `<div class="set-row">
       <div class="set-num">${i+1}</div>
       <input class="set-inp ${saved.weight ? 'has-v' : ''}" type="number" inputmode="decimal"
-        placeholder="${lastRef ? lastRef.max : '—'}"
+        placeholder="${lastRef ? lastRef.weight : '—'}"
         value="${saved.weight || ''}"
         onchange="saveSet('${prog.id}','${week}','${dayKey}','${ex.id}',${i},'weight',this.value)"
         oninput="this.classList.toggle('has-v',this.value.length>0)" id="w_${uid}_${i}">
@@ -937,7 +982,7 @@ function renderProgress() {
   let hasData = false;
   let html = `<div style="padding:4px 0 16px">
     <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:26px;color:var(--charcoal);margin-bottom:4px">Progress</div>
-    <div style="font-size:13px;color:var(--muted)">Best weight tracked across all sessions</div>
+    <div style="font-size:13px;color:var(--muted)">Estimated 1-rep max across all sessions</div>
   </div>`;
 
   tracked.forEach(ex => {
@@ -945,31 +990,42 @@ function renderProgress() {
     PROGRAMMES.forEach(prog => {
       if (!prog.workouts[ex.dayKey]) return;
       for (let w = 1; w <= (prog.weeks || 4); w++) {
-        const weights = [];
+        let bestE1rm = null, bestWeight = null;
         for (let s = 0; s < 5; s++) {
           const k = setKey(prog.id, w, ex.dayKey, ex.exId, s);
-          if (STATE[k] && STATE[k].weight) weights.push(parseFloat(STATE[k].weight));
+          if (STATE[k] && STATE[k].weight) {
+            const weight = parseFloat(STATE[k].weight);
+            const reps = parseFloat(STATE[k].reps);
+            const e1rm = calcE1RM(weight, reps);
+            if (e1rm && (!bestE1rm || e1rm > bestE1rm)) { bestE1rm = e1rm; }
+            if (!bestWeight || weight > bestWeight) bestWeight = weight;
+          }
         }
-        if (weights.length) points.push({ label: `${prog.name.replace('Month ','')} W${w}`, max: Math.max(...weights) });
+        if (bestE1rm || bestWeight) {
+          points.push({ label: `${prog.name.replace('Month ','')} W${w}`, e1rm: bestE1rm, weight: bestWeight, display: bestE1rm || bestWeight });
+        }
       }
     });
 
     if (!points.length) return;
     hasData = true;
-    const maxVal = Math.max(...points.map(p => p.max));
+    const maxVal = Math.max(...points.map(p => p.display));
 
     html += `<div class="prog-ex-row">
       <div class="prog-ex-name">${ex.label}</div>
-      <div style="display:flex;align-items:flex-end;gap:3px;margin-top:10px;height:52px">
+      <div style="display:flex;align-items:flex-end;gap:3px;margin-top:10px;height:60px">
         ${points.map(pt => {
-          const h = Math.max(6, Math.round((pt.max / maxVal) * 46));
+          const h = Math.max(6, Math.round((pt.display / maxVal) * 50));
+          const valLabel = pt.e1rm ? `~${pt.e1rm}` : `${pt.weight}`;
+          const barColor = pt.e1rm ? 'var(--coral)' : 'var(--slate)';
           return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px">
-            <div style="font-size:9px;color:var(--coral);font-weight:600">${pt.max} lbs</div>
-            <div style="width:100%;height:${h}px;background:var(--coral);border-radius:3px 3px 0 0;opacity:0.7"></div>
+            <div style="font-size:9px;color:${barColor};font-weight:600">${valLabel}</div>
+            <div style="width:100%;height:${h}px;background:${barColor};border-radius:3px 3px 0 0;opacity:0.7"></div>
             <div style="font-size:8px;color:var(--muted);font-weight:500">${pt.label}</div>
           </div>`;
         }).join('')}
       </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px">~ e1RM lbs · slate = weight only (no reps logged)</div>
     </div>`;
   });
 
