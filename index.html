@@ -774,8 +774,9 @@ function renderWeightsDetail(prog, day, week) {
 }
 
 function calcE1RM(weight, reps) {
-  if (!weight || !reps || reps < 1) return null;
-  return Math.round(weight * reps * 0.0333 + weight);
+  if (!weight || !reps || isNaN(weight) || isNaN(reps) || reps < 1 || weight <= 0) return null;
+  if (reps === 1) return Math.round(weight);
+  return Math.round(weight * (1 + reps / 30));
 }
 
 function getLastRef(prog, dayKey, exId, currentWeek) {
